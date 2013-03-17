@@ -1,0 +1,94 @@
+#!/usr/bin/perl
+
+use 5.008;
+use strict;
+use warnings;
+use File::Basename;
+
+my $repototalsize = 0;
+my %path2revnum = ();
+my %path2totalsize = ();
+my %path2sha = ();
+my %dir2totalsize = ();
+my %branch2totalsize = ();
+my %commits_sha1 = ();
+my $i = 0;
+
+my @branches = ();
+if (scalar @ARGV) {
+	@branches = @ARGV;
+}
+else {
+	@branches = `git for-each-ref --format='%(refname)'`;
+}
+
+for my $branch ( @branches ) {
+	chomp($branch);
+
+	open(my $gi, "-|", "git log --pretty=format:%H $branch") or
+		die "Cannot run git log: $!\n";
+	while ((my $commit = <$gi>)) {
+		chomp($commit);
+		next if (exists $commits_sha1{$commit});
+		$commits_sha1{$commit} = 0;
+		$i++;
+		print "branch: $branch commit $i: $commit\n";
+		open(my $gl, "-|", "git ls-tree -r -l $commit") or
+			die "Cannot run git log: $!\n";
+		while ((my $line = <$gl>)) {
+			chomp($line);
+			my ($mode, $type, $sha, $size, $path) = split(' ', $line, 5);
+
+			if (not exists $path2revnum{$path}) {
+				$path2revnum{$path} = 0;
+				$path2totalsize{$path} = 0;
+				$path2sha{$path} = "";
+			}
+
+			if ($path2sha{$path} ne $sha) {
+				$path2sha{$path} = $sha;
+				$repototalsize += $size;
+				$path2revnum{$path}++;
+				$path2totalsize{$path} += $size;
+
+				my $dir = $path;
+				while (($dir = dirname($dir))) {
+					last if ($dir eq "." or $dir eq "/");
+					if (not exists $dir2totalsize{$dir}) {
+						$dir2totalsize{$dir} = $size;
+					}
+					else {
+						$dir2totalsize{$dir} += $size;
+					}
+				}
+			}
+
+		}
+		close($gl);
+		die "git log failed" unless $? == 0;
+	}
+	close($gi);
+	die "git log failed" unless $? == 0;
+}
+
+print "by total size:\n";
+foreach my $path (reverse sort { $path2totalsize{$a} <=> $path2totalsize{$b} } keys %path2totalsize) {
+	print "$path2totalsize{$path} (", sprintf("%.02f", $path2totalsize{$path}/$repototalsize*100), "%)\t$path2revnum{$path}\t$path\n";
+}
+
+print "by revision number:\n";
+foreach my $path (reverse sort { $path2revnum{$a} <=> $path2revnum{$b} } keys %path2revnum) {
+	print "$path2revnum{$path}\t$path2totalsize{$path}\t$path\n";
+}
+
+print "by dir total size:\n";
+foreach my $dir (reverse sort { $dir2totalsize{$a} <=> $dir2totalsize{$b} } keys %dir2totalsize) {
+	print "$dir2totalsize{$dir} (", sprintf("%.02f", $dir2totalsize{$dir}/$repototalsize*100), "%)\t$dir\n";
+}
+
+print "by dir (total size):\n";
+foreach my $dir (sort keys %dir2totalsize) {
+	print "$dir2totalsize{$dir} (", sprintf("%.02f", $dir2totalsize{$dir}/$repototalsize*100), "%)\t$dir\n";
+}
+
+print "repototalsize: $repototalsize\n";
